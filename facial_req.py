@@ -21,12 +21,12 @@ total_time = 0  # For calculating speed
 encodingsP = "encodings.pickle"
 print("[INFO] loading encodings + face detector...")
 data = pickle.loads(open(encodingsP, "rb").read())
-prototxt = "c:/Users/User/Documents/GitHub/Face-Recognition/deploy.prototxt"
-model = "c:/Users/User/Documents/GitHub/Face-Recognition/res10_300x300_ssd_iter_140000.caffemodel"
+prototxt = "deploy.prototxt"
+model = "res10_300x300_ssd_iter_140000.caffemodel"
 detector = cv2.dnn.readNetFromCaffe(prototxt, model)
 
 # Define the dataset path (folder containing subfolders with images to be tested)
-dataset_path = "testing"  # Change this to the path of your test dataset
+dataset_path = "test"  # Change this to the path of your test dataset
 
 
 # Start the video stream

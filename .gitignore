@@ -1,1 +1,4 @@
 env39/
+test/
+train/
+105_classes_pins_dataset/
