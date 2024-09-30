@@ -1,25 +1,37 @@
-# Import necessary packages
-from imutils.video import FPS
+import cv2
 import face_recognition
 import imutils
+import numpy as np
+import time
 import pickle
 import os
-import cv2
-import numpy as np
+from imutils.video import FPS
 
 # Initialize the total images processed and correct predictions counter
 total_images = 0
 correct_predictions = 0
 
-# Load the known faces and embeddings along with OpenCV's Haar cascade for face detection
-print("[INFO] loading encodings + face detector...")
+# Initialize counters
+TP = 0  # True Positives
+FP = 0  # False Positives
+FN = 0  # False Negatives
+total_time = 0  # For calculating speed
+
+# Load face encodings and DNN model
 encodingsP = "encodings.pickle"
-cascade = "haarcascade_frontalface_default.xml"
+print("[INFO] loading encodings + face detector...")
 data = pickle.loads(open(encodingsP, "rb").read())
-detector = cv2.CascadeClassifier(cascade)
+prototxt = "deploy.prototxt"
+model = "res10_300x300_ssd_iter_140000.caffemodel"
+detector = cv2.dnn.readNetFromCaffe(prototxt, model)
 
 # Define the dataset path (folder containing subfolders with images to be tested)
-dataset_path = "testing"  # Change this to the path of your test dataset
+dataset_path = "test"  # Change this to the path of your test dataset
+
+
+# Start the video stream
+# vs = cv2.VideoCapture(0)
+# time.sleep(2.0)
 
 # Loop through each subfolder in the dataset folder
 for person_name in os.listdir(dataset_path):
@@ -42,24 +54,25 @@ for person_name in os.listdir(dataset_path):
 
         total_images += 1
         frame = imutils.resize(frame, width=500)
+        start_time = time.time()  # Start time for speed calculation
 
         # Convert the input frame from BGR to grayscale (for face detection)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        # Detect faces in the grayscale frame
-        rects = detector.detectMultiScale(gray, scaleFactor=1.1, 
-                                          minNeighbors=5, minSize=(30, 30),
-                                          flags=cv2.CASCADE_SCALE_IMAGE)
+        # DNN-based face detection
+        (h, w) = frame.shape[:2]
+        blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)), 1.0, (300, 300), (104.0, 177.0, 123.0))
+        detector.setInput(blob)
+        detections = detector.forward()
 
-        if len(rects) == 0:
-            print(f"[INFO] No faces detected in {image_path}")
-            continue
-
-        # OpenCV returns bounding box coordinates in (x, y, w, h) order
-        # but we need them in (top, right, bottom, left) order, so we
-        # need to do a bit of reordering
-        boxes = [(y, x + w, y + h, x) for (x, y, w, h) in rects]
+        boxes = []
+        for i in range(0, detections.shape[2]):
+            confidence = detections[0, 0, i, 2]
+            if confidence > 0.5:
+                box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
+                (startX, startY, endX, endY) = box.astype("int")
+                boxes.append((startY, endX, endY, startX))
 
         # Compute the facial embeddings for each face bounding box
         encodings = face_recognition.face_encodings(rgb, boxes)
@@ -73,7 +86,7 @@ for person_name in os.listdir(dataset_path):
 
             # Initialize the name to "Unknown" and set a threshold for confidence
             name = "Unknown"
-            threshold = 0.6  # You can adjust this threshold based on your needs
+            threshold = 0.5  # You can adjust this threshold based on your needs
 
             # Find the best match and its distance
             if True in matches:
@@ -112,14 +125,27 @@ for person_name in os.listdir(dataset_path):
 
         subfolder_name = person_name  # Get the current person's name from the subfolder
 
-        # If the predicted name is not "Unknown", consider it a correct match
+        # Determine whether recognition is correct
         if predicted_name == person_name:
-            correct_predictions += 1
+            TP += 1  # True Positive: Correct identification
+        elif predicted_name == "Unknown":
+            FN += 1  # False Negative: Missed identification
         else:
-            print(f"[INFO] {image_name} identified as Unknown")
+            FP += 1  # False Positive: Incorrect identification
 
-# Final output with accuracy
+        end_time = time.time()  # End time for speed calculation
+        total_time += (end_time - start_time)
+
+# Calculate metrics
+accuracy = (TP / total_images) * 100 if total_images > 0 else 0
+precision = (TP / (TP + FP)) if (TP + FP) > 0 else 0
+recall = (TP / (TP + FN)) if (TP + FN) > 0 else 0
+average_time_per_image = total_time / total_images if total_images > 0 else 0
+average_fps = 1 / average_time_per_image if average_time_per_image > 0 else 0
+
+# Output the results
 print(f"[INFO] Total images processed: {total_images}")
-print(f"[INFO] Correct predictions: {correct_predictions}")
-accuracy = (correct_predictions / total_images) * 100 if total_images > 0 else 0
 print(f"[INFO] Accuracy: {accuracy:.2f}%")
+print(f"[INFO] Precision: {precision:.2f}")
+print(f"[INFO] Recall: {recall:.2f}")
+print(f"[INFO] Average FPS: {average_fps:.2f}")

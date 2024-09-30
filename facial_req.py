@@ -1,23 +1,13 @@
-import cv2
+from imutils.video import VideoStream
+from imutils.video import FPS
 import face_recognition
 import imutils
-import numpy as np
-import time
 import pickle
-import os
-from imutils.video import FPS
+import time
+import cv2
+import numpy as np
 
-# Initialize the total images processed and correct predictions counter
-total_images = 0
-correct_predictions = 0
-
-# Initialize counters
-TP = 0  # True Positives
-FP = 0  # False Positives
-FN = 0  # False Negatives
-total_time = 0  # For calculating speed
-
-# Load face encodings and DNN model
+currentname = "unknown"
 encodingsP = "encodings.pickle"
 print("[INFO] loading encodings + face detector...")
 data = pickle.loads(open(encodingsP, "rb").read())
@@ -25,127 +15,94 @@ prototxt = "deploy.prototxt"
 model = "res10_300x300_ssd_iter_140000.caffemodel"
 detector = cv2.dnn.readNetFromCaffe(prototxt, model)
 
-# Define the dataset path (folder containing subfolders with images to be tested)
-dataset_path = "test"  # Change this to the path of your test dataset
+print("[INFO] starting video stream...")
+vs = VideoStream(src=0).start()
+# vs = VideoStream(usePiCamera=True).start()
+time.sleep(2.0)
 
+fps = FPS().start()
 
-# Start the video stream
-# vs = cv2.VideoCapture(0)
-# time.sleep(2.0)
+while True:
+    frame = vs.read()
+    frame = imutils.resize(frame, width=500)
 
-# Loop through each subfolder in the dataset folder
-for person_name in os.listdir(dataset_path):
-    person_folder = os.path.join(dataset_path, person_name)
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-    # Check if the path is a directory
-    if not os.path.isdir(person_folder):
-        continue
+    (h, w) = frame.shape[:2]
+    blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)), 1.0, (300, 300), (104.0, 177.0, 123.0))
+    detector.setInput(blob)
+    detections = detector.forward()
 
-    # Loop through each image in the person's folder
-    for image_name in os.listdir(person_folder):
-        image_path = os.path.join(person_folder, image_name)
-        print(f"[INFO] Processing image: {image_path}")
+    boxes = []
+    for i in range(0, detections.shape[2]):
+        confidence = detections[0, 0, i, 2]
+        if confidence > 0.5:
+            box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
+            (startX, startY, endX, endY) = box.astype("int")
+            boxes.append((startY, endX, endY, startX))
 
-        # Load the input image
-        frame = cv2.imread(image_path)
-        if frame is None:
-            print(f"[WARNING] Skipping {image_path}, cannot read image.")
-            continue
+    # Compute the facial embeddings for each face bounding box
+    encodings = face_recognition.face_encodings(rgb, boxes)
+    names = []
 
-        total_images += 1
-        frame = imutils.resize(frame, width=500)
-        start_time = time.time()  # Start time for speed calculation
+    for encoding in encodings:
+        matches = face_recognition.compare_faces(data["encodings"], encoding)
+        distances = face_recognition.face_distance(data["encodings"], encoding)
+        name = "Unknown"
+        threshold = 0.5
+        if True in matches:
+            # Get the index of the smallest distance
+            best_match_index = np.argmin(distances)
+            best_distance = distances[best_match_index]
 
-        # Convert the input frame from BGR to grayscale (for face detection)
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # Check if the best distance is below the threshold
+            if best_distance < threshold:
+                name = data["names"][best_match_index]
 
-        # DNN-based face detection
-        (h, w) = frame.shape[:2]
-        blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)), 1.0, (300, 300), (104.0, 177.0, 123.0))
-        detector.setInput(blob)
-        detections = detector.forward()
+        names.append(name)
 
-        boxes = []
-        for i in range(0, detections.shape[2]):
-            confidence = detections[0, 0, i, 2]
-            if confidence > 0.5:
-                box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
-                (startX, startY, endX, endY) = box.astype("int")
-                boxes.append((startY, endX, endY, startX))
+    # Select the best name prediction
+    predicted_name = "Unknown"  # Default to Unknown
+    if names:
+        unique_names = list(set(names))  # Get unique names
+        best_name = None
+        best_score = float('inf')  # Initialize with infinity
 
-        # Compute the facial embeddings for each face bounding box
-        encodings = face_recognition.face_encodings(rgb, boxes)
-        names = []
+        # Loop through unique names to find the best one
+        for unique_name in unique_names:
+            if unique_name != "Unknown":
+                idx = names.index(unique_name)  # Get index of this name
+                distance = distances[idx]  # Get the corresponding distance
+                if distance < best_score:  # Find the closest match
+                    best_score = distance
+                    best_name = unique_name
 
-        # Loop over the facial embeddings
-        for encoding in encodings:
-            # Attempt to match each face in the input image to our known encodings
-            matches = face_recognition.compare_faces(data["encodings"], encoding)
-            distances = face_recognition.face_distance(data["encodings"], encoding)
+        # Set the predicted name if a best name was found
+        if best_name is not None:
+            predicted_name = best_name
 
-            # Initialize the name to "Unknown" and set a threshold for confidence
-            name = "Unknown"
-            threshold = 0.6  # You can adjust this threshold based on your needs
+    # Compare recognized names
+    print(f"recognized as {predicted_name}")
 
-            # Find the best match and its distance
-            if True in matches:
-                # Get the index of the smallest distance
-                best_match_index = np.argmin(distances)
-                best_distance = distances[best_match_index]
+    for ((top, right, bottom, left), name) in zip(boxes, names):
+        cv2.rectangle(frame, (left, top), (right, bottom),
+            (0, 255, 225), 2)
+        y = top - 15 if top - 15 > 15 else top + 15
+        cv2.putText(frame, predicted_name, (left, y), cv2.FONT_HERSHEY_SIMPLEX,
+            .8, (0, 255, 255), 2)
 
-                # Check if the best distance is below the threshold
-                if best_distance < threshold:
-                    name = data["names"][best_match_index]
+    cv2.imshow("Facial Recognition is Running", frame)
+    key = cv2.waitKey(1) & 0xFF
 
-            names.append(name)
+    if key == ord("q"):
+        break
 
-        # Select the best name prediction
-        predicted_name = "Unknown"  # Default to Unknown
-        if names:
-            unique_names = list(set(names))  # Get unique names
-            best_name = None
-            best_score = float('inf')  # Initialize with infinity
+    fps.update()
 
-            # Loop through unique names to find the best one
-            for unique_name in unique_names:
-                if unique_name != "Unknown":
-                    idx = names.index(unique_name)  # Get index of this name
-                    distance = distances[idx]  # Get the corresponding distance
-                    if distance < best_score:  # Find the closest match
-                        best_score = distance
-                        best_name = unique_name
+fps.stop()
+print("[INFO] elapsed time: {:.2f}".format(fps.elapsed()))
+print("[INFO] approx. FPS: {:.2f}".format(fps.fps()))
 
-            # Set the predicted name if a best name was found
-            if best_name is not None:
-                predicted_name = best_name
-
-        # Compare recognized names
-        print(f"[INFO] {image_name} recognized as {predicted_name}")
-
-        subfolder_name = person_name  # Get the current person's name from the subfolder
-
-        # Determine whether recognition is correct
-        if predicted_name == person_name:
-            TP += 1  # True Positive: Correct identification
-        elif predicted_name == "Unknown":
-            FN += 1  # False Negative: Missed identification
-        else:
-            FP += 1  # False Positive: Incorrect identification
-
-        end_time = time.time()  # End time for speed calculation
-        total_time += (end_time - start_time)
-
-# Calculate metrics
-accuracy = (TP / total_images) * 100 if total_images > 0 else 0
-precision = (TP / (TP + FP)) if (TP + FP) > 0 else 0
-recall = (TP / (TP + FN)) if (TP + FN) > 0 else 0
-average_time_per_image = total_time / total_images if total_images > 0 else 0
-average_fps = 1 / average_time_per_image if average_time_per_image > 0 else 0
-
-# Output the results
-print(f"[INFO] Total images processed: {total_images}")
-print(f"[INFO] Accuracy: {accuracy:.2f}%")
-print(f"[INFO] Precision: {precision:.2f}")
-print(f"[INFO] Recall: {recall:.2f}")
-print(f"[INFO] Average FPS: {average_fps:.2f}")
+cv2.destroyAllWindows()
+vs.stop()

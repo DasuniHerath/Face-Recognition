@@ -3,7 +3,7 @@ import shutil
 import random
 
 # Define the paths to your dataset and where the split data should be stored
-data_dir = '105_classes_pins_dataset'  # Path to the original dataset
+data_dir = 'dataset'  # Path to the original dataset
 train_dir = 'train'  # Directory to store training data
 test_dir = 'test'  # Directory to store testing data
 
