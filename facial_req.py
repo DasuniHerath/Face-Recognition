@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 
 currentname = "unknown"
-encodingsP = "encodings.pickle"
+encodingsP = "encodings_face_recognition.pickle"
 print("[INFO] loading encodings + face detector...")
 data = pickle.loads(open(encodingsP, "rb").read())
 prototxt = "deploy.prototxt"
